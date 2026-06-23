@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { User, onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "./firebase";
+import { auth, db } from "./firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 export function isDummyAccount(email: string | null | undefined): boolean {
   if (!email) return false;
@@ -43,49 +44,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [posyanduName, setPosyanduNameState] = useState<string | null>(null);
   const [puskesmasName, setPuskesmasNameState] = useState<string | null>(null);
 
-  // Load and apply properties when authentication state is determined
-  useEffect(() => {
-    const userId = isDemo ? (mockUser || "demo") : (user?.email || null);
-    if (userId) {
-      const savedFullName = localStorage.getItem("gizi_user_fullname_" + userId);
-      if (savedFullName) {
-        setFullNameState(savedFullName);
-      } else {
-        if (isDummyAccount(userId)) {
-          const globalFullName = localStorage.getItem("gizi_user_fullname");
-          setFullNameState(globalFullName || (isKaderMail(userId) ? "Hanifah Larama" : "dr. Sari Wulandari"));
-        } else {
-          setFullNameState(null);
-        }
-      }
-
-      const savedPosyandu = localStorage.getItem("gizi_kader_posyandu_" + userId);
-      if (savedPosyandu) {
-        setPosyanduNameState(savedPosyandu);
-      } else {
-        if (isDummyAccount(userId)) {
-          const globalPosyandu = localStorage.getItem("gizi_kader_posyandu");
-          setPosyanduNameState(globalPosyandu || "Mawar - Kel. Limau Manis");
-        } else {
-          setPosyanduNameState(null);
-        }
-      }
-
-      const savedPuskesmas = localStorage.getItem("gizi_bidan_puskesmas_" + userId);
-      if (savedPuskesmas) {
-        setPuskesmasNameState(savedPuskesmas);
-      } else {
-        if (isDummyAccount(userId)) {
-          const globalPuskesmas = localStorage.getItem("gizi_bidan_puskesmas");
-          setPuskesmasNameState(globalPuskesmas || "Puskesmas Pauh - Padang");
-        } else {
-          setPuskesmasNameState(null);
-        }
+  // Fungsi pembantu untuk sinkronisasi data profil ke Cloud Firestore database
+  const syncProfileToCloud = async (key: string, value: string) => {
+    if (!isDemo && auth.currentUser) {
+      try {
+        const userRef = doc(db, "users", auth.currentUser.uid);
+        await setDoc(userRef, {
+          [key]: value,
+          email: auth.currentUser.email,
+          role: role || (isKaderMail(auth.currentUser.email) ? "Kader" : "Bidan"),
+          updatedAt: Date.now()
+        }, { merge: true });
+      } catch (e) {
+        console.error("Gagal sinkronisasi profil ke Firestore:", e);
       }
     }
+  };
+
+  // Memuat data profil pengguna saat kondisi autentikasi berubah
+  useEffect(() => {
+    const fetchProfile = async () => {
+      if (isDemo) {
+        // JALUR AKUN DUMMY (Tetap pertahankan logic localStorage bawaanmu)
+        const userId = mockUser || "demo";
+        const savedFullName = localStorage.getItem("gizi_user_fullname_" + userId);
+        if (savedFullName) setFullNameState(savedFullName);
+        else setFullNameState(isKaderMail(userId) ? "Hanifah Larama" : "dr. Sari Wulandari");
+
+        const savedPosyandu = localStorage.getItem("gizi_kader_posyandu_" + userId);
+        if (savedPosyandu) setPosyanduNameState(savedPosyandu);
+        else setPosyanduNameState("Mawar - Kel. Limau Manis");
+
+        const savedPuskesmas = localStorage.getItem("gizi_bidan_puskesmas_" + userId);
+        if (savedPuskesmas) setPuskesmasNameState(savedPuskesmas);
+        else setPuskesmasNameState("Puskesmas Pauh - Padang");
+        
+        setLoading(false);
+        return;
+      }
+
+      // JALUR USER ASLI (Ambil data dari Cloud Firestore)
+      if (user) {
+        try {
+          const userRef = doc(db, "users", user.uid);
+          const userSnap = await getDoc(userRef);
+
+          if (userSnap.exists()) {
+            const cloudData = userSnap.data();
+            if (cloudData.fullName) setFullNameState(cloudData.fullName);
+            if (cloudData.posyanduName) setPosyanduNameState(cloudData.posyanduName);
+            if (cloudData.puskesmasName) setPuskesmasNameState(cloudData.puskesmasName);
+            if (cloudData.role) setRoleState(cloudData.role);
+          } else {
+            // Fallback ke localStorage lokal jika data cloud belum terbuat
+            const userId = user.email || "default";
+            setFullNameState(localStorage.getItem("gizi_user_fullname_" + userId));
+            setPosyanduNameState(localStorage.getItem("gizi_kader_posyandu_" + userId));
+            setPuskesmasNameState(localStorage.getItem("gizi_bidan_puskesmas_" + userId));
+          }
+        } catch (err) {
+          console.error("Gagal mengambil data user dari Firestore:", err);
+        }
+      }
+      setLoading(false);
+    };
+
+    fetchProfile();
   }, [user, isDemo, mockUser]);
 
-  // Persistence of role in localStorage for session state stability
+  // Mempertahankan data sesi role dasar dari localStorage saat reload browser
   useEffect(() => {
     const savedRole = localStorage.getItem("gizi_user_role");
     if (savedRole === "Kader" || savedRole === "Bidan") {
@@ -105,6 +132,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRoleState(newRole);
     if (newRole) {
       localStorage.setItem("gizi_user_role", newRole);
+      if (!isDemo && auth.currentUser) {
+        setDoc(doc(db, "users", auth.currentUser.uid), { role: newRole }, { merge: true });
+      }
     } else {
       localStorage.removeItem("gizi_user_role");
     }
@@ -125,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (name) {
       localStorage.setItem("gizi_user_fullname_" + userId, name);
       localStorage.setItem("gizi_user_fullname", name);
+      syncProfileToCloud("fullName", name); // Sinkronisasi otomatis ke cloud
     } else {
       localStorage.removeItem("gizi_user_fullname_" + userId);
     }
@@ -136,6 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (name) {
       localStorage.setItem("gizi_kader_posyandu_" + userId, name);
       localStorage.setItem("gizi_kader_posyandu", name);
+      syncProfileToCloud("posyanduName", name); // Sinkronisasi otomatis ke cloud
     } else {
       localStorage.removeItem("gizi_kader_posyandu_" + userId);
     }
@@ -147,6 +179,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (name) {
       localStorage.setItem("gizi_bidan_puskesmas_" + userId, name);
       localStorage.setItem("gizi_bidan_puskesmas", name);
+      syncProfileToCloud("puskesmasName", name); // Sinkronisasi otomatis ke cloud
     } else {
       localStorage.removeItem("gizi_bidan_puskesmas_" + userId);
     }
@@ -180,7 +213,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
         setUser(firebaseUser);
-        setLoading(false);
       });
     } catch {
       setLoading(false);
