@@ -1,0 +1,6 @@
+{
+  "name": "SIGIZI BALITA",
+  "description": "Sistem informasi pemantauan status gizi balita berdasarkan standar WHO dan rekomendasi gizi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
