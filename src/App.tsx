@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./config/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import Login from "./pages/Login";
-import RegisterKader from "./pages/RegisterKader"; // Import ditambahkan ke kelompok file pages
 import KaderLayout from "./layouts/KaderLayout";
 import KaderDashboard from "./pages/kader/Dashboard";
 import InputData from "./pages/kader/InputData";
@@ -19,9 +18,8 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public Routes */}
+          {/* Public Route */}
           <Route path="/" element={<Login />} />
-          <Route path="/register" element={<RegisterKader />} /> {/* Diletakkan di dalam <Routes> sebagai rute publik */}
 
           {/* Protected Routes - Kader */}
           <Route
