@@ -1,10 +1,11 @@
 /// <reference types="vite/client" />
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
-import { Eye, EyeOff, Shield, Layout, Circle, Stethoscope, Baby } from "lucide-react";
+import { Eye, EyeOff, Shield, Circle, Stethoscope, Baby } from "lucide-react";
 import { auth } from "../config/firebase";
 import { useAuth } from "../config/AuthContext";
+import { getRegisteredPuskesmas } from "../services/db";
 
 export default function Login() {
   const [isRegister, setIsRegister] = useState(false);
@@ -21,35 +22,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
 
-  // List of registered Puskesmas
-  const [puskesmasList, setPuskesmasList] = useState<string[]>(() => {
-    const saved = localStorage.getItem("gizi_registered_puskesmas_list");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {
-        // Fallback
-      }
-    }
-    const defaultList = [
-      "Puskesmas Pauh - Padang"
-    ];
-    localStorage.setItem("gizi_registered_puskesmas_list", JSON.stringify(defaultList));
-    return defaultList;
-  });
-
-  // Selected Puskesmas for Kader dropdown registration
-  const [selectedPuskesmas, setSelectedPuskesmas] = useState(() => {
-    const saved = localStorage.getItem("gizi_registered_puskesmas_list");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0];
-      } catch (e) {}
-    }
-    return "Puskesmas Pauh - Padang";
-  });
+  // Mengambil daftar Puskesmas asli dari Cloud Firestore
+  const [puskesmasList, setPuskesmasList] = useState<string[]>([]);
+  const [selectedPuskesmas, setSelectedPuskesmas] = useState("");
+  const [loadingPuskesmas, setLoadingPuskesmas] = useState(false);
 
   const { 
     setRole, 
@@ -61,16 +37,19 @@ export default function Login() {
   } = useAuth();
   const navigate = useNavigate();
 
-  const addPuskesmasToList = (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    const currentList = [...puskesmasList];
-    if (!currentList.some(item => item.toLowerCase() === trimmed.toLowerCase())) {
-      const updatedList = [...currentList, trimmed];
-      setPuskesmasList(updatedList);
-      localStorage.setItem("gizi_registered_puskesmas_list", JSON.stringify(updatedList));
+  // Load daftar Puskesmas dari database ketika mode Register Kader aktif
+  useEffect(() => {
+    if (isRegister && role === "Kader") {
+      setLoadingPuskesmas(true);
+      getRegisteredPuskesmas().then((list) => {
+        setPuskesmasList(list);
+        if (list.length > 0) {
+          setSelectedPuskesmas(list[0]);
+        }
+        setLoadingPuskesmas(false);
+      });
     }
-  };
+  }, [isRegister, role]);
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,7 +108,7 @@ export default function Login() {
           return;
         }
 
-        // Try actual Firebase Register
+        // Registrasi ke Firebase Auth
         await createUserWithEmailAndPassword(auth, email, password);
         
         setRole(role);
@@ -139,7 +118,6 @@ export default function Login() {
           setPuskesmasName(selectedPuskesmas, email);
         } else {
           setPuskesmasName(puskesmasNameInput, email);
-          addPuskesmasToList(puskesmasNameInput);
         }
         setIsDemo(false);
         setMockUser(null);
@@ -161,19 +139,17 @@ export default function Login() {
           setErrorMsg("Format email tidak valid.");
           setLoading(false);
         } else {
-          // Fallback if unconfigured
           handleDemoAuth(true);
         }
       }
     } else {
-      // Login flow
+      // Flow Login
       try {
         if (isDummyConfig) {
           handleDemoAuth(false);
           return;
         }
 
-        // Bypass for dummy test accounts to allow quick testing without creating them in Firebase Auth
         const normalizedEmail = email.toLowerCase().trim();
         const isDummy = (normalizedEmail === "kader@puskesmas-pauh.id" || normalizedEmail === "bidan@puskesmas-pauh.id") && password === "password123";
         if (isDummy) {
@@ -181,7 +157,6 @@ export default function Login() {
           return;
         }
 
-        // Try actual Firebase Auth
         await signInWithEmailAndPassword(auth, email, password);
         
         setRole(role);
@@ -198,7 +173,7 @@ export default function Login() {
         }, 800);
 
       } catch (error: any) {
-        console.warn("Firebase Auth failed. Attempting Demo mode fallback.", error);
+        console.warn("Firebase Auth failed.", error);
         const isAuthError = error.code === "auth/invalid-credential" || error.code === "auth/user-not-found" || error.code === "auth/wrong-password";
         
         if (isAuthError) {
@@ -223,10 +198,8 @@ export default function Login() {
         setPuskesmasName(selectedPuskesmas, email);
       } else {
         setPuskesmasName(puskesmasNameInput, email);
-        addPuskesmasToList(puskesmasNameInput);
       }
     } else {
-      // For general login, fallback to defaults ONLY if it matches mock dummy emails
       const normalizedEmail = email.toLowerCase().trim();
       const isDummy = normalizedEmail === "kader@puskesmas-pauh.id" || normalizedEmail === "bidan@puskesmas-pauh.id";
       if (isDummy) {
@@ -264,11 +237,9 @@ export default function Login() {
         
         {/* Left Column (Brand Presentation & Info Stats) */}
         <div className="w-full md:w-5/12 bg-gradient-to-tr from-[#FFD7E1] to-[#369AF0] p-8 md:p-12 text-white flex flex-col justify-between relative overflow-hidden">
-          {/* Subtle Decorative Circles */}
           <div className="absolute top-10 right-10 w-48 h-48 bg-white/20 rounded-full blur-2xl"></div>
           <div className="absolute bottom-10 left-10 w-72 h-72 bg-white/30 rounded-full blur-3xl"></div>
 
-          {/* Logo & Subtitle */}
           <div className="relative z-10 space-y-3">
             <div className="flex items-center space-x-2">
               <div className="h-9 w-9 bg-white/20 backdrop-blur-md rounded-xl flex items-center justify-center border border-white/20 shadow-xs">
@@ -279,11 +250,10 @@ export default function Login() {
             
             <div className="inline-flex items-center space-x-2 bg-white/10 backdrop-blur-md py-1 px-3 rounded-full border border-white/10 shadow-xs">
               <Circle className="h-2 w-2 fill-emerald-300 text-emerald-300 animate-pulse" />
-              <span className="text-xs font-bold uppercase tracking-wider text-white">Puskesmas Pauh - Padang</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-white">Puskesmas Terintegrasi</span>
             </div>
           </div>
 
-          {/* Mid Typography Message */}
           <div className="relative z-10 my-12 space-y-4">
             <h1 className="text-3xl md:text-5xl font-bold tracking-tight leading-tight text-white">
               Pantau Gizi Balita bersama SIGIZI
@@ -293,7 +263,6 @@ export default function Login() {
             </p>
           </div>
 
-          {/* Baseline Stats Indicators */}
           <div className="relative z-10 grid grid-cols-3 gap-4 border-t border-white/20 pt-6">
             <div>
               <p className="text-2xl font-bold text-white">21</p>
@@ -317,7 +286,7 @@ export default function Login() {
               {isRegister ? "Daftar akun baru" : "Masuk ke sistem"}
             </h2>
             <p className="text-xs md:text-sm text-slate-500 font-normal leading-relaxed">
-              {isRegister ? "Isi formulir pendaftaran di bawah ini untuk bergabung." : "Selamat datang"}
+              {isRegister ? "Isi formulir pendaftaran di bawah ini untuk bergabung." : "Selamat datang kembali."}
             </p>
           </div>
 
@@ -337,7 +306,7 @@ export default function Login() {
                     setErrorMsg("");
                     setSuccessMsg("Kredensial Bidan terpilih. Klik 'Masuk ke Dashboard'.");
                   }}
-                  className="flex items-center space-x-2.5 p-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-left transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="flex items-center space-x-2.5 p-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-left transition-all active:scale-95"
                 >
                   <Stethoscope className="h-4 w-4 text-blue-500 flex-shrink-0" />
                   <div className="min-w-0">
@@ -355,7 +324,7 @@ export default function Login() {
                     setErrorMsg("");
                     setSuccessMsg("Kredensial Kader terpilih. Klik 'Masuk ke Dashboard'.");
                   }}
-                  className="flex items-center space-x-2.5 p-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-left transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="flex items-center space-x-2.5 p-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-left transition-all active:scale-95"
                 >
                   <Baby className="h-4 w-4 text-pink-500 flex-shrink-0" />
                   <div className="min-w-0">
@@ -367,7 +336,6 @@ export default function Login() {
             </div>
           )}
 
-          {/* Error and Success Notifications */}
           {errorMsg && (
             <div className="p-4 bg-red-50 border border-red-100 text-red-600 rounded-xl text-sm font-normal">
               {errorMsg}
@@ -380,23 +348,18 @@ export default function Login() {
             </div>
           )}
 
-          {/* Form */}
           <form onSubmit={handleFormSubmit} className="space-y-6">
             
-            {/* Choose Role Selector - Glassmorphism UI Tab Selection */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                 {isRegister ? "Daftar Sebagai" : "Masuk Sebagai"}
               </label>
-              
               <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
                 <button
                   type="button"
                   onClick={() => setRoleLocal("Bidan")}
                   className={`py-3 rounded-lg text-sm font-semibold transition-all duration-200 ${
-                    role === "Bidan"
-                      ? "bg-white text-blue-600 shadow-xs"
-                      : "text-slate-600 hover:text-slate-900"
+                    role === "Bidan" ? "bg-white text-blue-600 shadow-xs" : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
                   <span className="flex items-center justify-center space-x-2">
@@ -409,9 +372,7 @@ export default function Login() {
                   type="button"
                   onClick={() => setRoleLocal("Kader")}
                   className={`py-3 rounded-lg text-sm font-semibold transition-all duration-200 ${
-                    role === "Kader"
-                      ? "bg-white text-blue-600 shadow-xs"
-                      : "text-slate-600 hover:text-slate-900"
+                    role === "Kader" ? "bg-white text-blue-600 shadow-xs" : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
                   <span className="flex items-center justify-center space-x-2">
@@ -422,14 +383,10 @@ export default function Login() {
               </div>
             </div>
 
-            {/* Additional Fields for Register Profile Registration */}
             {isRegister && (
               <>
-                {/* Nama Lengkap Input */}
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                    Nama Lengkap
-                  </label>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Nama Lengkap</label>
                   <input
                     type="text"
                     placeholder="Masukkan nama lengkap Anda"
@@ -439,13 +396,10 @@ export default function Login() {
                   />
                 </div>
 
-                {/* Conditional Posyandu / Puskesmas Input */}
                 {role === "Kader" ? (
                   <>
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                        Nama Posyandu
-                      </label>
+                      <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Nama Posyandu</label>
                       <input
                         type="text"
                         placeholder="Contoh: Mawar - Kel. Limau Manis"
@@ -456,70 +410,55 @@ export default function Login() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                        Puskesmas Pembina
-                      </label>
+                      <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Puskesmas Pembina</label>
                       <select
                         value={selectedPuskesmas}
                         onChange={(e) => setSelectedPuskesmas(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base leading-relaxed transition-all cursor-pointer"
+                        disabled={loadingPuskesmas}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base transition-all cursor-pointer"
                       >
-                        {puskesmasList.map((p, idx) => (
-                          <option key={idx} value={p}>
-                            {p}
-                          </option>
-                        ))}
+                        {loadingPuskesmas ? (
+                          <option>Memuat daftar puskesmas...</option>
+                        ) : (
+                          puskesmasList.map((p, idx) => (
+                            <option key={idx} value={p}>{p}</option>
+                          ))
+                        )}
                       </select>
                       <p className="text-[10px] text-slate-400">
-                        *Daftar ini mencakup unit Puskesmas yang terintegrasi oleh akun Bidan / Admin.
+                        *Daftar ini mencakup unit Puskesmas yang terintegrasi oleh akun Bidan.
                       </p>
                     </div>
                   </>
                 ) : (
                   <div className="space-y-2">
-                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                      Nama Puskesmas
-                    </label>
+                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Nama Puskesmas</label>
                     <input
                       type="text"
                       placeholder="Contoh: Puskesmas Pauh - Padang"
                       value={puskesmasNameInput}
                       onChange={(e) => setPuskesmasNameInput(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base leading-relaxed transition-all"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base transition-all"
                     />
                   </div>
                 )}
               </>
             )}
 
-            {/* Email Address */}
             <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                Username / Email
-              </label>
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Username / Email</label>
               <input
                 type="email"
-                placeholder="rekap@puskesmas-pauh.id"
+                placeholder="nama@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base leading-relaxed transition-all"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base transition-all"
               />
             </div>
 
-            {/* Password Field */}
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  Password
-                </label>
-                {!isRegister && (
-                  <button
-                    type="button"
-                    className="text-xs font-semibold text-blue-600 hover:underline"
-                  >
-                    Lupa Password?
-                  </button>
-                )}
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Password</label>
               </div>
               <div className="relative">
                 <input
@@ -527,7 +466,7 @@ export default function Login() {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-4 pr-12 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base leading-relaxed transition-all"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-4 pr-12 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base transition-all"
                 />
                 <button
                   type="button"
@@ -539,13 +478,10 @@ export default function Login() {
               </div>
             </div>
 
-            {/* Confirm Password Field (Only for Register flow) */}
             {isRegister && (
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                    Konfirmasi Password
-                  </label>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Konfirmasi Password</label>
                   {confirmPassword && (
                     <span className={`text-[10px] font-bold ${password === confirmPassword ? 'text-emerald-500' : 'text-red-500'}`}>
                       {password === confirmPassword ? 'Sandi Cocok' : 'Sandi Tidak Cocok'}
@@ -558,7 +494,7 @@ export default function Login() {
                     placeholder="••••••••"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-4 pr-12 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base leading-relaxed transition-all"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-4 pr-12 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white text-sm md:text-base transition-all"
                   />
                   <button
                     type="button"
@@ -571,33 +507,15 @@ export default function Login() {
               </div>
             )}
 
-            {/* Remember me checkbox - Only for Login state */}
-            {!isRegister && (
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="remember_me"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 border-slate-300 rounded text-blue-600 focus:ring-blue-500"
-                />
-                <label htmlFor="remember_me" className="ml-2 text-xs md:text-sm text-slate-500 font-normal">
-                  Ingat saya
-                </label>
-              </div>
-            )}
-
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm md:text-base font-bold transition-all shadow-md shadow-blue-500/10 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-blue-400"
+              className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm md:text-base font-bold transition-all shadow-md shadow-blue-500/10 disabled:bg-blue-400 active:scale-95"
             >
               {loading ? "Memproses..." : isRegister ? "Daftar Akun Baru" : "Masuk ke Dashboard"}
             </button>
           </form>
 
-          {/* Toggle Flow Button */}
           <div className="text-center pt-2 space-y-4">
             <p className="text-xs md:text-sm text-slate-600 font-normal">
               {isRegister ? "Sudah memiliki akun? " : "Belum memiliki akun? "}
@@ -615,13 +533,8 @@ export default function Login() {
                 {isRegister ? "Masuk sekarang" : "Daftar sekarang"}
               </button>
             </p>
-
-            <p className="text-[11px] text-slate-400 font-normal leading-relaxed">
-              Tekan tombol pendaftaran atau masuk secara langsung untuk mengaktifkan Sesi Interaktif Demo apabila Firebase Auth belum dikonfigurasi.
-            </p>
           </div>
         </div>
-
       </div>
     </div>
   );
