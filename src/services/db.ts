@@ -34,7 +34,6 @@ export interface RecordItem {
   kaderEmail?: string;
 }
 
-// Memory cache to store fetched records across pages for instant loading
 let cachedRecords: RecordItem[] = [];
 const CACHE_TTL_MS = 60 * 1000;
 let cacheTime = 0;
@@ -59,7 +58,6 @@ export async function saveRecord(
   const localId = `local_${Date.now()}`;
   const newRecordItem = { ...finalRecord, id: localId } as any;
 
-  // 1. Instantly save to local storage first so we never lose it
   try {
     const stored = localStorage.getItem("local_pemeriksaan_balita");
     const list = stored ? JSON.parse(stored) : [];
@@ -69,7 +67,6 @@ export async function saveRecord(
     console.error("Local storage save failed:", e);
   }
 
-  // 2. Instantly update memory cache
   if (cachePuskesmas === finalRecord.puskesmasName) {
     cachedRecords = [newRecordItem, ...cachedRecords];
   } else {
@@ -78,22 +75,18 @@ export async function saveRecord(
     isCacheLoaded = true;
   }
 
-  // 3. Fire-and-forget write to Firestore in the background
-  // This prevents any Firestore latency, hanging, or rules failure from blocking the snappy UI
   const colRef = collection(db, "pemeriksaan_balita");
   addDoc(colRef, finalRecord)
     .then((docRef) => {
-      // Successfully saved to Firestore! We can update the memory cache item with the real doc ID
       const index = cachedRecords.findIndex(item => item.id === localId);
       if (index !== -1) {
         cachedRecords[index].id = docRef.id;
       }
     })
     .catch((err) => {
-      console.warn("Background Firestore save skipped or failed (unconfigured, slow, or offline):", err);
+      console.warn("Background Firestore save skipped or failed:", err);
     });
 
-  // Return the record item instantly!
   return newRecordItem;
 }
 
@@ -115,7 +108,6 @@ export async function getRecords(
     console.error("Local storage read failed:", e);
   }
 
-  // Define a background fetcher that populates the cache
   const fetchFirestoreBackground = () => {
     const colRef = collection(db, "pemeriksaan_balita");
     const q = query(colRef, where("puskesmasName", "==", targetPuskesmas));
@@ -142,19 +134,16 @@ export async function getRecords(
         }
       })
       .catch((err) => {
-        console.warn("Background fetch from Firestore failed (this is expected if Firestore is offline or unconfigured):", err);
+        console.warn("Background fetch from Firestore failed:", err);
       });
   };
 
-  // Launch background fetch
   fetchFirestoreBackground();
 
-  // If we already have the cache loaded, return it instantly!
   if (isCacheLoaded && cachePuskesmas === targetPuskesmas) {
     return [...cachedRecords];
   }
 
-  // Otherwise, return local storage items instantly
   const combined = [...localList.filter(item => item.puskesmasName === targetPuskesmas)];
   combined.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   return combined;
@@ -162,4 +151,33 @@ export async function getRecords(
 
 export function getSeedRecords(): RecordItem[] {
   return [];
+}
+
+/**
+ * FUNGSI BARU: Mengambil seluruh daftar nama Puskesmas milik Bidan yang sudah terdaftar di cloud Firestore.
+ * Panggil fungsi ini di komponen Register/Daftar milik Kader untuk memuat data opsi Dropdown.
+ */
+export async function getRegisteredPuskesmas(): Promise<string[]> {
+  try {
+    const colRef = collection(db, "users");
+    const q = query(colRef, where("role", "==", "Bidan"));
+    const querySnapshot = await getDocs(q);
+    
+    const puskesmasList: string[] = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data.puskesmasName && !puskesmasList.includes(data.puskesmasName)) {
+        puskesmasList.push(data.puskesmasName);
+      }
+    });
+
+    // Jika database cloud masih benar-benar kosong, sediakan fallback teks default
+    if (puskesmasList.length === 0) {
+      return ["Puskesmas Pauh - Padang"];
+    }
+    return puskesmasList;
+  } catch (e) {
+    console.error("Gagal mengambil daftar puskesmas terdaftar:", e);
+    return ["Puskesmas Pauh - Padang"];
+  }
 }
